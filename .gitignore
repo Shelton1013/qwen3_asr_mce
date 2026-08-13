@@ -1,0 +1,34 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+.venv/
+venv/
+env/
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Evaluation artefacts
+exp/
+runs/
+outputs/
+*.jsonl
+!tests/**/*.jsonl
+.mce_audio_cache/
+
+# Model weights / audio should never be committed
+*.wav
+*.flac
+*.mp3
+*.pt
+*.bin
+*.safetensors
+
+.DS_Store
+.idea/
+.vscode/

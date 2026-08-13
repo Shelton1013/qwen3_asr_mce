@@ -1,0 +1,10 @@
+# Shell scripts must keep LF endings or they fail on Linux with
+# "bad interpreter: /usr/bin/env bash^M" -- this repo is authored on Windows
+# but run on a GPU server.
+*.sh text eol=lf
+
+*.py text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.jsonl text eol=lf

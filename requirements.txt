@@ -1,0 +1,17 @@
+# Scoring only -- pure CPU, no model weights needed.
+opencc-python-reimplemented>=0.1.7
+
+# Inference. Install the ones you actually plan to run.
+# transformers>=4.57      # Qwen3-ASR + Whisper
+# torch>=2.4
+# accelerate>=0.30
+# soundfile>=0.12
+# librosa>=0.10           # only needed if your audio is not already 16 kHz
+# datasets>=2.20          # only for --hf-dataset
+# funasr>=1.1             # only for SenseVoice
+
+# Optional
+# cn2an>=0.5              # Chinese numeral folding under --normalize-numbers
+
+# Development
+# pytest>=7.0
