@@ -245,6 +245,58 @@ denominator.
 
 ---
 
+## Preparing the MCE dataset
+
+`scripts/prepare_mce.py` turns the MCE Cantonese–English corpus into train/test
+manifests. Expected layout:
+
+```
+MCE_Dataset/
+  Audio/{N}_MCE/{N}_{i}.wav     one utterance per file
+  Text/data_{N}.csv             header "Topic,Instance", one row per utterance
+```
+
+```bash
+python scripts/prepare_mce.py /data/MCE_Dataset --out data/mce --train-folders 112
+```
+
+Writes `train.jsonl`, `test.jsonl` and `split.json` (which folders went where,
+plus every problem found).
+
+Three things it does on purpose:
+
+**Splits by folder, not by utterance.** Folders are speakers. An utterance-level
+split puts the same voice on both sides, so a fine-tuned model gets scored partly
+on speakers it trained on — and that optimism is unrecoverable after the fact.
+
+**Refuses to guess when counts disagree.** Row *i* of the CSV is the transcript
+of wav *i*; the pairing is positional. If a folder has 86 wavs and 85 rows, the
+folder is skipped with a warning rather than emitting a manifest that looks fine
+and scores nonsense.
+
+**Sorts folders numerically.** Lexicographic ordering would put `10_MCE` before
+`2_MCE` and silently change which speakers land in the training split.
+
+Encoding is probed automatically. The corpus stores *Traditional* Chinese in
+**GBK**, so the probe tries UTF-8 first (strict, fails fast) and GB18030 before
+any Big5 variant. Transcripts arrive wrapped in doubled quotes; those are
+stripped, since they are not speech and would otherwise be scored as tokens.
+
+Building manifests on Windows for a Linux GPU box:
+
+```bash
+python scripts/prepare_mce.py F:/csasr/MCE_Dataset --out data/mce \
+    --train-folders 112 --path-prefix /data/MCE_Dataset
+```
+
+Then run the Stage-0 baseline sweep on the held-out speakers:
+
+```bash
+scripts/run_baselines.sh data/mce/test.jsonl exp/mce_stage0
+```
+
+---
+
 ## Development
 
 ```bash
