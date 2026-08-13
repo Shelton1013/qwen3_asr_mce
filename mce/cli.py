@@ -52,6 +52,13 @@ def _add_manifest_args(p: argparse.ArgumentParser) -> None:
         help="split boundary for --dataset; must match what prepare_mce.py used",
     )
     src.add_argument("--train-ratio", type=float, default=0.7)
+    src.add_argument(
+        "--dataset-stratify",
+        default="none",
+        choices=["none", "topic"],
+        help="'topic' splits within each topic group; must match what "
+        "prepare_mce.py used or the two paths disagree about the test set",
+    )
     src.add_argument("--dataset-encoding", default="auto")
     src.add_argument("--hf-dataset", help="Hugging Face dataset id, e.g. Shelton1013/SwitchLingua_audio")
     src.add_argument("--hf-config", default=None, help="dataset config / subset name")
@@ -152,11 +159,17 @@ def load_records(args) -> List[dict]:
             train_folders=args.train_folders,
             train_ratio=args.train_ratio,
             encoding=args.dataset_encoding,
+            stratify=args.dataset_stratify,
             warn=lambda m: print(f"[warn] {m}"),
+        )
+        boundary = (
+            f"stratified by topic, {args.train_ratio:.0%} train"
+            if args.dataset_stratify == "topic"
+            else f"first {args.train_folders} folders are train"
         )
         print(
             f"[info] {args.dataset}:{args.dataset_split} -> {len(records)} utterances "
-            f"(split boundary: first {args.train_folders} folders are train)"
+            f"({boundary})"
         )
         if not records:
             raise SystemExit(

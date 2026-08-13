@@ -277,6 +277,39 @@ and scores nonsense.
 **Sorts folders numerically.** Lexicographic ordering would put `10_MCE` before
 `2_MCE` and silently change which speakers land in the training split.
 
+### Stratify when the corpus is batched
+
+A corpus collected in batches gives each batch its own topic list, and the
+folders are numbered in collection order. A positional "first N folders" split
+then quietly becomes a **topic** split — the held-out speakers discuss subjects
+the model never saw, often at a different code-switching density. The resulting
+score measures cross-topic generalisation while looking like a recognition
+number, and no later analysis can separate the two.
+
+```bash
+python scripts/prepare_mce.py /data/MCE_Dataset --out data/mce \
+    --stratify topic --train-ratio 0.7
+```
+
+`--stratify topic` groups folders by the set of topics they cover and takes
+`--train-ratio` of *each* group. Speakers still never cross splits.
+
+Either way, `prepare_mce.py` profiles both sides and refuses to stay quiet when
+they are not comparable:
+
+```
+[BALANCE] the two splits are not comparable:
+    - 9 topic(s) common in train are absent from test: 天氣, 娛樂, 學習, 工作, 旅遊, 本地時事 ...
+    - code-switching density differs: mean CMI 0.186 (train) vs 0.077 (test), a 59% gap.
+      The test set is easier than training in the one dimension this task is about.
+    - English token share differs: 18.7% (train) vs 7.7% (test).
+    - consider --stratify topic; a positional split becomes a topic split when the
+      corpus is ordered by collection batch.
+```
+
+The same warnings are stored in `split.json` under `balance_warnings`, and
+`--dataset` mode prints them prefixed with `BALANCE:`.
+
 Encoding is probed automatically. The corpus stores *Traditional* Chinese in
 **GBK**, so the probe tries UTF-8 first (strict, fails fast) and GB18030 before
 any Big5 variant. Transcripts arrive wrapped in doubled quotes; those are

@@ -194,19 +194,157 @@ def split_folders(
     return list(folders[:n_train]), list(folders[n_train:])
 
 
+def topic_signature(records: Sequence[dict]) -> frozenset:
+    """The set of topics a folder covers.
+
+    Corpora collected in batches give each batch its own topic list, so this
+    signature identifies which batch a folder belongs to without needing a batch
+    column. Folders sharing a signature are interchangeable; folders with
+    different signatures are not.
+    """
+    return frozenset(r["topic"] for r in records)
+
+
+def stratified_split(
+    per_folder: Sequence[Tuple[int, List[dict]]],
+    train_ratio: float = 0.7,
+    warn: Optional[Callable[[str], None]] = None,
+) -> Tuple[List[int], List[int]]:
+    """Split folders by speaker, taking ``train_ratio`` of *each* topic group.
+
+    A positional "first N folders" split silently becomes a topic split when the
+    corpus is ordered by collection batch: the held-out folders then cover
+    subjects the model never saw, at a different code-switching density. The
+    resulting number measures cross-topic generalisation, not recognition, and
+    no later analysis can separate the two.
+    """
+    say = warn or (lambda _m: None)
+    groups: Dict[frozenset, List[int]] = {}
+    for idx, records in per_folder:
+        groups.setdefault(topic_signature(records), []).append(idx)
+
+    if len(groups) > 1:
+        say(
+            f"corpus contains {len(groups)} distinct topic groups "
+            f"({', '.join(str(len(v)) + ' folders' for v in groups.values())}); "
+            f"stratifying so both splits see all of them."
+        )
+
+    train: List[int] = []
+    test: List[int] = []
+    # Sort groups by their smallest folder index so the assignment is
+    # deterministic regardless of dict iteration order.
+    for _, indices in sorted(groups.items(), key=lambda kv: min(kv[1])):
+        indices = sorted(indices)
+        n_train = max(1, round(len(indices) * train_ratio)) if len(indices) > 1 else len(indices)
+        train.extend(indices[:n_train])
+        test.extend(indices[n_train:])
+        if len(indices) == 1:
+            say(
+                f"topic group with folders {indices} has a single folder; it "
+                f"cannot appear in both splits and was assigned to train."
+            )
+    return sorted(train), sorted(test)
+
+
+def check_split_balance(
+    train: Sequence[dict],
+    test: Sequence[dict],
+    cmi_tolerance: float = 0.20,
+    topic_tolerance: float = 0.05,
+) -> List[str]:
+    """Report ways the two splits are not comparable.
+
+    A test set that differs from training in topic coverage or code-switching
+    density will move the score for reasons that have nothing to do with the
+    model, and the confound is invisible in the headline number.
+    """
+    from .tokenizer import EN, ZH, code_mixing_index, count_langs, tokenize
+
+    if not train or not test:
+        return []
+
+    warnings: List[str] = []
+
+    def profile(records):
+        topics: Dict[str, int] = {}
+        zh = en = 0
+        cmi = 0.0
+        for r in records:
+            topics[r["topic"]] = topics.get(r["topic"], 0) + 1
+            toks = tokenize(r["text"])
+            counts = count_langs(toks)
+            zh += counts[ZH]
+            en += counts[EN]
+            cmi += code_mixing_index(toks)
+        n = len(records)
+        shares = {k: v / n for k, v in topics.items()}
+        return shares, cmi / n, (en / (zh + en) if zh + en else 0.0)
+
+    train_topics, train_cmi, train_en = profile(train)
+    test_topics, test_cmi, test_en = profile(test)
+
+    missing = sorted(
+        t for t, share in train_topics.items()
+        if share >= topic_tolerance and test_topics.get(t, 0.0) < topic_tolerance / 5
+    )
+    unseen = sorted(
+        t for t, share in test_topics.items()
+        if share >= topic_tolerance and train_topics.get(t, 0.0) < topic_tolerance / 5
+    )
+    if missing:
+        warnings.append(
+            f"{len(missing)} topic(s) common in train are absent from test: "
+            f"{', '.join(missing[:6])}{' ...' if len(missing) > 6 else ''}"
+        )
+    if unseen:
+        warnings.append(
+            f"{len(unseen)} topic(s) common in test are absent from train: "
+            f"{', '.join(unseen[:6])}{' ...' if len(unseen) > 6 else ''}"
+        )
+
+    if train_cmi and abs(train_cmi - test_cmi) / train_cmi > cmi_tolerance:
+        warnings.append(
+            f"code-switching density differs: mean CMI {train_cmi:.3f} (train) vs "
+            f"{test_cmi:.3f} (test), a {abs(train_cmi - test_cmi) / train_cmi:.0%} gap. "
+            f"The test set is {'easier' if test_cmi < train_cmi else 'harder'} than "
+            f"training in the one dimension this task is about."
+        )
+    if train_en and abs(train_en - test_en) / train_en > cmi_tolerance:
+        warnings.append(
+            f"English token share differs: {train_en:.1%} (train) vs {test_en:.1%} (test)."
+        )
+
+    if warnings:
+        warnings.append(
+            "consider --stratify topic; a positional split becomes a topic split "
+            "when the corpus is ordered by collection batch."
+        )
+    return warnings
+
+
 def prepare_mce(
     root: Path,
     train_folders: int = 112,
     train_ratio: float = 0.7,
     encoding: str = "auto",
     path_prefix: Optional[str] = None,
+    stratify: str = "none",
     warn: Optional[Callable[[str], None]] = None,
 ) -> dict:
     """Read the whole corpus and return both splits plus metadata.
 
     Returns ``{"train": [...], "test": [...], "meta": {...}}`` with ``audio``
     already stringified.
+
+    ``stratify="topic"`` takes ``train_ratio`` of the folders in each topic
+    group instead of the first ``train_folders`` overall, and ignores
+    ``train_folders``. Balance is checked either way; the check is what tells
+    you a positional split has quietly turned into a topic split.
     """
+    if stratify not in ("none", "topic"):
+        raise ValueError(f"stratify must be 'none' or 'topic', got {stratify!r}")
+    say = warn or (lambda _m: None)
     root = Path(root)
     folders, problems = discover(root)
     if not folders:
@@ -214,27 +352,47 @@ def prepare_mce(
             f"no {{N}}_MCE folders paired with data_{{N}}.csv under {root}"
         )
 
-    train, test = split_folders(folders, train_folders, train_ratio, warn=warn)
+    # Read everything up front: stratification needs each folder's topics, and
+    # reading twice would let the two passes disagree.
+    per_folder: List[Tuple[int, List[dict]]] = []
+    for idx, audio_dir, csv_path in folders:
+        recs, probs = read_folder(audio_dir, csv_path, encoding)
+        problems.extend(probs)
+        per_folder.append((idx, recs))
 
+    if stratify == "topic":
+        if train_folders is not None:
+            say(f"--stratify topic uses train_ratio={train_ratio:.0%}; train_folders is ignored.")
+        train_idx, test_idx = stratified_split(per_folder, train_ratio, warn=say)
+    else:
+        train_part, test_part = split_folders(per_folder, train_folders, train_ratio, warn=say)
+        train_idx = [i for i, _ in train_part]
+        test_idx = [i for i, _ in test_part]
+
+    by_idx = dict(per_folder)
     splits: Dict[str, List[dict]] = {}
-    for name, chosen in (("train", train), ("test", test)):
+    for name, chosen in (("train", train_idx), ("test", test_idx)):
         records: List[dict] = []
-        for _, audio_dir, csv_path in chosen:
-            recs, probs = read_folder(audio_dir, csv_path, encoding)
-            problems.extend(probs)
-            for r in recs:
+        for idx in chosen:
+            for r in by_idx[idx]:
                 records.append({**r, "audio": emit_path(r["audio"], root, path_prefix)})
         splits[name] = records
+
+    # Returned rather than warned: callers show it after the split summaries,
+    # where the reader has the numbers in front of them.
+    balance = check_split_balance(splits["train"], splits["test"])
 
     splits["meta"] = {
         "root": str(root),
         "n_folders": len(folders),
-        "train_folders": [i for i, _, _ in train],
-        "test_folders": [i for i, _, _ in test],
+        "stratify": stratify,
+        "train_folders": train_idx,
+        "test_folders": test_idx,
         "n_train_utts": len(splits["train"]),
         "n_test_utts": len(splits["test"]),
         "path_prefix": path_prefix,
         "problems": problems,
+        "balance_warnings": balance,
     }
     return splits
 
@@ -249,6 +407,12 @@ def load_mce(root, split: str = "test", **kwargs) -> List[dict]:
     if split not in SPLITS:
         raise ValueError(f"split must be one of {SPLITS}, got {split!r}")
     prepared = prepare_mce(Path(root), **kwargs)
+    # Direct mode has no summary section to hang these off, so surface them
+    # through the same channel as the other warnings rather than dropping them.
+    warn = kwargs.get("warn")
+    if warn:
+        for message in prepared["meta"]["balance_warnings"]:
+            warn(f"BALANCE: {message}")
     if split == "all":
         return prepared["train"] + prepared["test"]
     return prepared[split]

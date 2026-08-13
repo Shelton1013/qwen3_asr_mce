@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mce.datasets import (  # noqa: E402
     ENCODINGS,
+    check_split_balance,
     clean_transcript,
     decode_csv,
     discover,
@@ -43,6 +44,8 @@ from mce.datasets import (  # noqa: E402
     prepare_mce,
     read_folder,
     split_folders,
+    stratified_split,
+    topic_signature,
 )
 from mce.tokenizer import EN, ZH, code_mixing_index, count_langs, tokenize  # noqa: E402
 
@@ -50,6 +53,7 @@ from mce.tokenizer import EN, ZH, code_mixing_index, count_langs, tokenize  # no
 # for anything MCE-shaped, even though the implementations moved.
 __all__ = [
     "ENCODINGS",
+    "check_split_balance",
     "clean_transcript",
     "decode_csv",
     "discover",
@@ -57,6 +61,8 @@ __all__ = [
     "prepare_mce",
     "read_folder",
     "split_folders",
+    "stratified_split",
+    "topic_signature",
     "main",
 ]
 
@@ -108,6 +114,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=0.7,
         help="fallback split ratio used when fewer folders exist than --train-folders",
     )
+    ap.add_argument(
+        "--stratify",
+        default="none",
+        choices=["none", "topic"],
+        help="'topic' takes --train-ratio of the folders in each topic group instead "
+        "of the first --train-folders overall. Use this when the corpus is ordered "
+        "by collection batch, or a positional split silently becomes a topic split.",
+    )
     ap.add_argument("--encoding", default="auto", help=f"csv encoding; auto tries {ENCODINGS}")
     ap.add_argument(
         "--path-prefix",
@@ -125,6 +139,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             train_ratio=args.train_ratio,
             encoding=args.encoding,
             path_prefix=args.path_prefix,
+            stratify=args.stratify,
             warn=lambda m: print(f"[warn] {m}"),
         )
     except FileNotFoundError as exc:
@@ -149,6 +164,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     print()
     for name in ("train", "test"):
         print(summarise(prepared[name], name) if prepared[name] else f"  {name}: EMPTY")
+
+    balance = meta.get("balance_warnings") or []
+    if balance:
+        print("\n[BALANCE] the two splits are not comparable:")
+        for b in balance:
+            print(f"    - {b}")
 
     problems = meta["problems"]
     if problems:
