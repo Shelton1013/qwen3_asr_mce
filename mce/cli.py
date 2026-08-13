@@ -113,7 +113,12 @@ def _add_metric_args(p: argparse.ArgumentParser) -> None:
 
 def _add_model_args(p: argparse.ArgumentParser) -> None:
     m = p.add_argument_group("model")
-    m.add_argument("--model", required=True, help="registry alias, e.g. qwen3-asr-1.7b")
+    m.add_argument(
+        "--model",
+        required=True,
+        help="registry alias (qwen3-asr-1.7b), a Hub repo id, or a local checkpoint "
+        "directory -- the runner family is read from its config.json",
+    )
     m.add_argument("--model-id", default=None, help="override the checkpoint id/path")
     m.add_argument(
         "--language",
