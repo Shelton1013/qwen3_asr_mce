@@ -43,6 +43,9 @@ WHISPER_TURBO="${WHISPER_TURBO:-$(local_or whisper-large-v3-turbo openai/whisper
 SENSEVOICE="${SENSEVOICE:-$(local_or SenseVoiceSmall        iic/SenseVoiceSmall)}"
 
 BATCH_SIZE="${BATCH_SIZE:-8}"
+# One GPU. These models are a few GB in bfloat16; sharding them across devices
+# buys nothing and breaks Qwen3-ASR's audio encoder.
+DEVICE="${DEVICE:-auto}"
 
 mkdir -p "$OUTDIR"
 
@@ -67,6 +70,7 @@ run () {
     --out-json "$OUTDIR/$name.metrics.json" \
     --out-utts "$OUTDIR/$name.utts.jsonl" \
     --batch-size "$BATCH_SIZE" \
+    --device "$DEVICE" \
     "${NORM_ARGS[@]}" \
     "$@"
 }

@@ -126,7 +126,13 @@ def _add_model_args(p: argparse.ArgumentParser) -> None:
         help="language hint. Whisper: 'zh' (default) or 'yue' (known to collapse). "
              "Qwen3-ASR: leave unset so it can switch freely.",
     )
-    m.add_argument("--device", default="auto")
+    m.add_argument(
+        "--device",
+        default="auto",
+        help="'auto' (cuda:0 if available, else cpu), an explicit device like "
+        "cuda:2, or 'shard' to split across GPUs. Sharding is opt-in because "
+        "Qwen3-ASR's audio encoder reads a buffer directly and breaks under it.",
+    )
     m.add_argument("--dtype", default="auto")
     m.add_argument("--batch-size", type=int, default=1)
     m.add_argument("--max-new-tokens", type=int, default=256)

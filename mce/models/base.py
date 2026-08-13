@@ -13,6 +13,47 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 
+#: Substring -> what to actually do about it. These are the failures that have
+#: cost real debugging time; matching on the message turns each of them from a
+#: stack trace into one line of instruction.
+ERROR_HINTS = (
+    (
+        "found at least two devices",
+        "the model was sharded across GPUs and a submodule buffer stayed behind. "
+        "Load it onto one GPU with --device cuda:0 -- a 0.6B/1.7B model does not "
+        "need sharding.",
+    ),
+    (
+        "out of memory",
+        "lower --batch-size, or point --device at a less loaded GPU.",
+    ),
+    (
+        "continue_final_message",
+        "the processor files do not match this transformers version. Check that "
+        "the checkpoint is the '-hf' conversion, not the original release.",
+    ),
+    (
+        "randomly initialised",
+        "the checkpoint layout does not match the model class; see the load "
+        "report above.",
+    ),
+    (
+        "No such file or directory",
+        "an audio path in the manifest does not resolve on this machine. Rebuild "
+        "the manifest here, or pass --path-prefix when building it elsewhere.",
+    ),
+)
+
+
+def hint_for_error(message: str) -> str:
+    """Map an exception message onto an actionable fix, or '' if unrecognised."""
+    lowered = message.lower()
+    for needle, hint in ERROR_HINTS:
+        if needle.lower() in lowered:
+            return hint
+    return ""
+
+
 @dataclass
 class ASRModel(abc.ABC):
     """Base runner.
@@ -110,13 +151,17 @@ class ASRModel(abc.ABC):
             return
         if processed and failures / processed <= self.max_failure_rate:
             return
-        raise RuntimeError(
+        message = (
             f"aborting: {failures} of the first {processed} utterances failed "
             f"({failures / processed:.0%}). This is a configuration problem, not a "
             f"model result -- continuing would emit empty hypotheses that score as "
             f"100% MER and look like a real (terrible) system.\n"
             f"Last error: {type(last_exc).__name__}: {last_exc}"
-        ) from last_exc
+        )
+        hint = hint_for_error(str(last_exc))
+        if hint:
+            message += f"\n\nLikely fix: {hint}"
+        raise RuntimeError(message) from last_exc
 
     # -- loading helpers --------------------------------------------------
 
@@ -177,10 +222,39 @@ class ASRModel(abc.ABC):
             return torch.bfloat16 if torch.cuda.is_available() else torch.float32
         return getattr(torch, self.dtype)
 
+    def resolve_device(self) -> str:
+        """The single device this model should live on.
+
+        torch is imported only when the answer actually depends on it, so a
+        scoring-only install (no torch) can still introspect a runner's config.
+        """
+        if self.device == "cuda":
+            return "cuda:0"
+        if self.device not in ("auto", None, "shard"):
+            return self.device
+        try:
+            import torch
+        except ImportError:
+            return "cpu"
+        return "cuda:0" if torch.cuda.is_available() else "cpu"
+
     def resolve_device_map(self):
-        if self.device == "auto":
+        """Placement for ``from_pretrained``.
+
+        Deliberately *not* ``device_map="auto"`` by default. These models are
+        0.6B-1.7B -- a few GB in bfloat16 -- so sharding buys nothing and costs
+        correctness: accelerate moves module inputs and outputs between devices,
+        but a submodule buffer read directly as a tensor inside ``forward``
+        (Qwen3-ASR's audio encoder does exactly this with its positional
+        embedding) stays on whichever device it was assigned, and the forward
+        pass dies with "found at least two devices".
+
+        ``--device shard`` opts back into multi-GPU placement for a model that
+        genuinely does not fit.
+        """
+        if self.device == "shard":
             return "auto"
-        return self.device
+        return {"": self.resolve_device()}
 
 
 def load_audio_16k(path: str):

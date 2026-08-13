@@ -31,12 +31,7 @@ class WhisperModel(ASRModel):
     condition_on_prev_tokens: bool = False
 
     def _load(self) -> None:
-        import torch
-        from transformers import (
-            AutoModelForSpeechSeq2Seq,
-            AutoProcessor,
-            pipeline,
-        )
+        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
         dtype = self.resolve_torch_dtype()
         model = self.load_pretrained(
@@ -47,10 +42,10 @@ class WhisperModel(ASRModel):
             dtype=dtype,
             low_cpu_mem_usage=True,
         )
-        device = 0 if (self.device == "auto" and torch.cuda.is_available()) else self.device
-        if device == "auto":
-            device = -1
-        model.to("cuda" if device == 0 else "cpu")
+        # One device for both the model and the pipeline. Passing them separately
+        # is how you end up with the weights on cuda:0 and the features on cpu.
+        device = self.resolve_device()
+        model.to(device)
         processor = AutoProcessor.from_pretrained(self.model_id)
         self.pipe = pipeline(
             "automatic-speech-recognition",
