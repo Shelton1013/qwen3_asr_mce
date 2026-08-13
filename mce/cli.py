@@ -243,6 +243,20 @@ def _serialisable_config(args) -> dict:
 def cmd_score(args) -> int:
     records = load_records(args)
     hyps = read_jsonl(args.hyp)
+
+    # Transcription records the exception on any utterance it could not decode.
+    # Those become empty hypotheses, which score as full deletions -- honest per
+    # utterance, but badly misleading in aggregate if half the run crashed.
+    failed = [h for h in hyps if h.get("error")]
+    if failed:
+        example = failed[0]["error"].splitlines()[0]
+        print(
+            f"!! {len(failed)}/{len(hyps)} hypotheses came from FAILED transcriptions "
+            f"and are empty.\n"
+            f"!! They are scored as full deletions, so every rate below is inflated.\n"
+            f"!! First error: {example}\n"
+        )
+
     pairs = join_hyps(records, hyps)
 
     norm = build_normalizer(args)
@@ -263,6 +277,7 @@ def cmd_score(args) -> int:
             "name": title,
             "config": _serialisable_config(args),
             "metrics": metrics.to_dict(),
+            "n_failed_transcriptions": len(failed),
         }
         Path(args.out_json).parent.mkdir(parents=True, exist_ok=True)
         with open(args.out_json, "w", encoding="utf-8") as fh:

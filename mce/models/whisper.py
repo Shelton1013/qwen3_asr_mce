@@ -39,8 +39,13 @@ class WhisperModel(ASRModel):
         )
 
         dtype = self.resolve_torch_dtype()
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            self.model_id, dtype=dtype, low_cpu_mem_usage=True
+        model = self.load_pretrained(
+            AutoModelForSpeechSeq2Seq,
+            self.model_id,
+            hint="Check that this directory is a transformers Whisper checkpoint "
+            "and not an OpenAI .pt release or a faster-whisper/CTranslate2 export.",
+            dtype=dtype,
+            low_cpu_mem_usage=True,
         )
         device = 0 if (self.device == "auto" and torch.cuda.is_available()) else self.device
         if device == "auto":

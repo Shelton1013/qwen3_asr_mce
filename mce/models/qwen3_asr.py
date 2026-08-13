@@ -24,6 +24,18 @@ from typing import List, Optional, Sequence
 
 from .base import ASRModel
 
+#: Qwen ships two checkpoint variants per size and they are not interchangeable.
+#: The original release stores its state dict under a ``thinker.`` prefix (the
+#: Qwen-Omni layout) and is meant for Qwen's own code; ``transformers`` needs
+#: the converted ``-hf`` repo. Loading the wrong one leaves every tensor
+#: randomly initialised, and the model still runs.
+NON_HF_CHECKPOINT_HINT = (
+    "Qwen3-ASR ships two checkpoint variants: the original release, whose state "
+    "dict keys start with 'thinker.', and the transformers-native '-hf' "
+    "conversion. This runner needs the '-hf' one -- e.g. Qwen/Qwen3-ASR-1.7B-hf "
+    "rather than Qwen/Qwen3-ASR-1.7B."
+)
+
 
 @dataclass
 class Qwen3ASRModel(ASRModel):
@@ -37,8 +49,10 @@ class Qwen3ASRModel(ASRModel):
 
         self.processor = AutoProcessor.from_pretrained(self.model_id)
         model_cls = self._resolve_model_class(transformers)
-        self.model = model_cls.from_pretrained(
+        self.model = self.load_pretrained(
+            model_cls,
             self.model_id,
+            hint=NON_HF_CHECKPOINT_HINT,
             device_map=self.resolve_device_map(),
             dtype=self.resolve_torch_dtype(),
         )

@@ -77,6 +77,24 @@ def diagnose(m: CorpusMetrics) -> str:
     """
     notes: List[str] = []
 
+    if m.n_ref_tokens and m.n_hyp_tokens == 0:
+        # Everything below would describe this as a language failure. It is not
+        # one: the system emitted nothing, which is a broken run, not a score.
+        return (
+            "-- diagnosis --\n"
+            "  Every hypothesis is empty: the system produced no output at all for "
+            "any\n  utterance. This is a broken run, not a recognition result -- the "
+            "100% rates\n  above are an artefact of scoring emptiness. Check the "
+            "transcription step for\n  load or decode errors before reading any of "
+            "these numbers."
+        )
+    if m.length_ratio is not None and 0 < m.length_ratio < 0.2:
+        notes.append(
+            f"- Hypotheses are {m.length_ratio:.2f}x the reference length. Before "
+            f"reading this as deletion errors, check how many utterances came back "
+            f"empty from a failed decode."
+        )
+
     if m.runaway_rate is not None and m.runaway_rate > 0.05:
         notes.append(
             f"- {_pct(m.runaway_rate)}% of utterances are >2x the reference length, and "
