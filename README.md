@@ -295,6 +295,26 @@ Then run the Stage-0 baseline sweep on the held-out speakers:
 scripts/run_baselines.sh data/mce/test.jsonl exp/mce_stage0
 ```
 
+### Skipping the manifest
+
+For a one-off evaluation, read the corpus directly:
+
+```bash
+python -m mce.cli run --dataset mce --dataset-root /data/MCE_Dataset \
+    --dataset-split test --train-folders 112 \
+    --model qwen3-asr-1.7b --hyp exp/qwen17b.hyp.jsonl --script t2s
+```
+
+`--dataset-split` takes `train`, `test` (default) or `all`. Both paths call the
+same code in `mce.datasets`, so they produce identical ids, order and split
+boundary — a score never depends on which flag you used.
+
+Manifests still earn their keep when the split has to be **frozen and shared**:
+fine-tuning reads `train.jsonl` hours before evaluation reads `test.jsonl`, and
+`split.json` is the auditable record of which speakers went where. Use
+`--dataset` when you just want a number now, and `prepare_mce.py` when the split
+is a decision you will have to defend later.
+
 ---
 
 ## Development

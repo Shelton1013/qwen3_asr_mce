@@ -140,9 +140,15 @@ class TestDiscover:
         assert any("no matching Audio/5_MCE" in p for p in problems)
 
     def test_missing_tree_is_a_hard_error(self, tmp_path):
+        # The library raises FileNotFoundError; the CLI converts it to SystemExit.
+        (tmp_path / "Audio").mkdir()
+        with pytest.raises(FileNotFoundError):
+            prepare_mce.discover(tmp_path)
+
+    def test_cli_converts_a_missing_tree_into_a_clean_exit(self, tmp_path):
         (tmp_path / "Audio").mkdir()
         with pytest.raises(SystemExit):
-            prepare_mce.discover(tmp_path)
+            prepare_mce.main([str(tmp_path), "--out", str(tmp_path / "out")])
 
 
 class TestEmitPath:
@@ -209,7 +215,7 @@ class TestSplit:
         rc, _ = self._run(tmp_path, 1, out)
         assert rc == 0
         captured = capsys.readouterr().out
-        assert "test manifest will be EMPTY" in captured
+        assert "test split will be EMPTY" in captured
         assert (out / "test.jsonl").read_text(encoding="utf-8") == ""
 
     def test_strict_mode_fails_when_a_folder_was_skipped(self, tmp_path):

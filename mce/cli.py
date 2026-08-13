@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .data import join_hyps, load_hf_dataset, load_manifest, read_jsonl, write_jsonl
+from .datasets import DATASETS, SPLITS, load_dataset
 from .metrics import score_corpus
 from .normalize import NormalizeConfig, Normalizer
 from .report import format_metrics, format_worst, markdown_table
@@ -32,6 +33,26 @@ def _add_manifest_args(p: argparse.ArgumentParser) -> None:
     src.add_argument("--id-key", default="id")
     src.add_argument("--audio-key", default="audio")
     src.add_argument("--text-key", default="text")
+    src.add_argument(
+        "--dataset",
+        choices=sorted(DATASETS),
+        help="read a corpus straight from disk, skipping the manifest step",
+    )
+    src.add_argument("--dataset-root", help="corpus directory for --dataset")
+    src.add_argument(
+        "--dataset-split",
+        default="test",
+        choices=list(SPLITS),
+        help="which split --dataset yields (default: test)",
+    )
+    src.add_argument(
+        "--train-folders",
+        type=int,
+        default=112,
+        help="split boundary for --dataset; must match what prepare_mce.py used",
+    )
+    src.add_argument("--train-ratio", type=float, default=0.7)
+    src.add_argument("--dataset-encoding", default="auto")
     src.add_argument("--hf-dataset", help="Hugging Face dataset id, e.g. Shelton1013/SwitchLingua_audio")
     src.add_argument("--hf-config", default=None, help="dataset config / subset name")
     src.add_argument("--hf-split", default="test")
@@ -121,6 +142,27 @@ def load_records(args) -> List[dict]:
             audio_key=args.audio_key,
             text_key=args.text_key,
         )
+    elif args.dataset:
+        if not args.dataset_root:
+            raise SystemExit("--dataset requires --dataset-root")
+        records = load_dataset(
+            args.dataset,
+            args.dataset_root,
+            split=args.dataset_split,
+            train_folders=args.train_folders,
+            train_ratio=args.train_ratio,
+            encoding=args.dataset_encoding,
+            warn=lambda m: print(f"[warn] {m}"),
+        )
+        print(
+            f"[info] {args.dataset}:{args.dataset_split} -> {len(records)} utterances "
+            f"(split boundary: first {args.train_folders} folders are train)"
+        )
+        if not records:
+            raise SystemExit(
+                f"the {args.dataset_split!r} split is empty; check --dataset-root "
+                f"and --train-folders"
+            )
     elif args.hf_dataset:
         records = load_hf_dataset(
             args.hf_dataset,
@@ -132,7 +174,9 @@ def load_records(args) -> List[dict]:
             cache_audio_dir=args.audio_cache_dir,
         )
     else:
-        raise SystemExit("one of --manifest or --hf-dataset is required")
+        raise SystemExit(
+            "one of --manifest, --dataset (with --dataset-root), or --hf-dataset is required"
+        )
     if args.limit:
         records = records[: args.limit]
     return records
