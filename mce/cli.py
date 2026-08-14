@@ -311,6 +311,44 @@ def cmd_run(args) -> int:
     return cmd_score(args)
 
 
+def cmd_analyze(args) -> int:
+    """Tabulate what actually went wrong, from a --out-utts dump."""
+    from .analyze import build_inventory, format_inventory, inventory_to_dict
+
+    rows = read_jsonl(args.utts)
+    missing = [r for r in rows if "ref" not in r or "hyp" not in r]
+    if missing:
+        raise SystemExit(
+            f"{args.utts}: {len(missing)} rows lack 'ref'/'hyp'. This command reads "
+            f"the per-utterance dump written by `score --out-utts`, not a hypothesis "
+            f"file."
+        )
+    if "test" in Path(args.utts).name and not args.allow_test:
+        print(
+            "!! This dump looks like it came from the TEST set. Mining test-set "
+            "failures\n!! and feeding them into training is contamination -- use dev. "
+            "Pass\n!! --allow-test if you really mean to read it.\n"
+        )
+        return 1
+
+    inv = build_inventory(
+        [(r["ref"], r["hyp"]) for r in rows], poi_window=args.poi_window
+    )
+    report = format_inventory(inv, top=args.top, min_count=args.min_count)
+    print(report)
+
+    if args.out_json:
+        Path(args.out_json).parent.mkdir(parents=True, exist_ok=True)
+        with open(args.out_json, "w", encoding="utf-8") as fh:
+            json.dump(inventory_to_dict(inv, args.min_count), fh, ensure_ascii=False, indent=2)
+        print(f"\n[info] pairs -> {args.out_json}")
+    if args.out_text:
+        Path(args.out_text).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out_text).write_text(report, encoding="utf-8")
+        print(f"[info] report -> {args.out_text}")
+    return 0
+
+
 def cmd_compare(args) -> int:
     """Render a markdown comparison table from several score --out-json files."""
     rows = []
@@ -371,6 +409,23 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--out-json", default=None)
     r.add_argument("--out-utts", default=None)
     r.set_defaults(func=cmd_run)
+
+    a = sub.add_parser(
+        "analyze",
+        help="tabulate substitution pairs from a score --out-utts dump (run it on dev)",
+    )
+    a.add_argument("--utts", required=True, help="per-utterance JSONL from score --out-utts")
+    a.add_argument("--top", type=int, default=30, help="rows per table")
+    a.add_argument("--min-count", type=int, default=2, help="hide pairs seen fewer times")
+    a.add_argument("--poi-window", type=int, default=1)
+    a.add_argument("--out-json", default=None, help="write the pairs for downstream use")
+    a.add_argument("--out-text", default=None, help="write the report")
+    a.add_argument(
+        "--allow-test",
+        action="store_true",
+        help="permit analysing a dump whose filename says 'test'",
+    )
+    a.set_defaults(func=cmd_analyze)
 
     c = sub.add_parser("compare", help="markdown table from several --out-json files")
     c.add_argument("results", nargs="+")
