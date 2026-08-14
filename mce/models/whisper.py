@@ -1,14 +1,35 @@
-"""Whisper runner, with the Cantonese language-token trap made explicit.
+"""Whisper runner, with the Cantonese language token measured rather than assumed.
 
-Forcing ``language="yue"`` on Whisper is a documented failure: the model saw far
-more ``zh`` text than ``yue`` during training, and when forced to ``yue`` it
-tries to reconcile spoken Cantonese with a written form it barely learned. The
-result is repetition loops and garbage tokens -- which shows up downstream as an
-insertion rate that pushes the error rate past 1.0.
+Community guidance says to force ``zh`` for Cantonese audio, on the reasoning
+that Whisper saw far more ``zh`` text than ``yue`` and collapses into repetition
+when pinned to ``yue``. On Cantonese-English code-switching that advice is
+backwards. Measured over 4164 MCE utterances with large-v3:
 
-The runner therefore defaults to ``zh``, and ``--language yue`` is the opt-in
-ablation. Run both and report both; the gap between them is a property of
-Whisper, not of your test set.
+===================  ======  ======
+metric                  zh     yue
+===================  ======  ======
+MER                   34.39   21.37
+CER_zh                33.28   20.39
+WER_en                40.49   25.74
+English omission      22.09    3.84
+English -> Chinese    31.13    7.50
+switch ratio          0.632   0.887
+===================  ======  ======
+
+The mechanism is legible in the code-switching metrics and invisible in the
+aggregate one. Pinned to ``zh``, Whisper is told the utterance is written
+Chinese, so it translates the English away and drops it outright in a fifth of
+utterances. Pinned to ``yue`` it is told the utterance is Cantonese -- a
+register that admits embedded English -- and keeps it.
+
+Part of the CER_zh gap is register rather than recognition: MCE references use
+Cantonese orthography (嘅 係 唔 啲) and a ``zh``-pinned Whisper writes Mandarin
+forms (的 是 不 些), which score as substitutions. The English-side gaps carry no
+such confound.
+
+The default is therefore ``yue``. ``--language zh`` remains available as the
+ablation, and ``--language auto`` leaves detection to the model, which is the
+only setting under which language-identification collapse can occur at all.
 """
 
 from __future__ import annotations
@@ -22,16 +43,14 @@ from .base import ASRModel, load_audio_16k
 @dataclass
 class WhisperModel(ASRModel):
     model_id: str = "openai/whisper-large-v3"
-    #: ``'zh'`` is the pragmatic default for Cantonese audio and ``'yue'`` the
-    #: ablation -- large-v3 does carry a ``yue`` token, but community reports
-    #: have it collapsing into repetition loops, since Whisper saw far more
-    #: ``zh`` text than ``yue``. Run both; the gap is a property of Whisper.
+    #: ``'yue'`` by measurement, not by assumption -- see the module docstring.
+    #: ``'zh'`` is the ablation.
     #:
-    #: ``None`` leaves language detection to the model. That is the only setting
+    #: ``''`` leaves language detection to the model. That is the only setting
     #: comparable to a model that picks its own language, and the only one under
     #: which language-identification collapse can occur at all: forcing a token
     #: hands the model the answer and suppresses the very failure being studied.
-    language: Optional[str] = "zh"
+    language: Optional[str] = "yue"
     #: Seconds above which an utterance is chunked. ``None`` disables chunking.
     #:
     #: Disabled by default, and that matters: transformers itself warns that

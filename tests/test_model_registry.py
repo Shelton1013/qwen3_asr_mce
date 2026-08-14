@@ -93,7 +93,9 @@ class TestBuildModel:
         d = make_ckpt(tmp_path, "whisper-large-v3-local")
         m = build_model(str(d))
         assert isinstance(m, WhisperModel)
-        assert m.language == "zh"       # the safe Cantonese default, not 'yue'
+        # 'yue', which measurement chose over the folklore default of 'zh':
+        # on MCE it halves MER and cuts English omission from 22% to 4%.
+        assert m.language == "yue"
 
     def test_sensevoice_path(self, tmp_path):
         d = make_ckpt(tmp_path, "SenseVoice-Small-Yue")
@@ -110,7 +112,12 @@ class TestBuildModel:
 
     def test_none_kwargs_do_not_clobber_runner_defaults(self):
         m = build_model("whisper-large-v3", language=None)
-        assert m.language == "zh"
+        assert m.language == "yue"
+
+    def test_empty_language_is_distinct_from_unset(self):
+        # "" asks for the model's own detection; None means "use the default".
+        assert build_model("whisper-large-v3", language="").language == ""
+        assert build_model("whisper-large-v3", language=None).language == "yue"
 
     def test_unknown_alias_error_points_at_model_id(self):
         with pytest.raises(KeyError) as exc:
