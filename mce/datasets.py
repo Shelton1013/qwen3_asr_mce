@@ -29,7 +29,7 @@ _FOLDER_RE = re.compile(r"^(\d+)_MCE$")
 _WAV_RE = re.compile(r"^(\d+)_(\d+)\.wav$", re.IGNORECASE)
 _CSV_RE = re.compile(r"^data_(\d+)\.csv$", re.IGNORECASE)
 
-SPLITS = ("train", "test", "all")
+SPLITS = ("train", "dev", "test", "all")
 
 
 # --------------------------------------------------------------------------
@@ -330,17 +330,24 @@ def prepare_mce(
     encoding: str = "auto",
     path_prefix: Optional[str] = None,
     stratify: str = "none",
+    dev_ratio: float = 0.0,
     warn: Optional[Callable[[str], None]] = None,
 ) -> dict:
-    """Read the whole corpus and return both splits plus metadata.
+    """Read the whole corpus and return the splits plus metadata.
 
-    Returns ``{"train": [...], "test": [...], "meta": {...}}`` with ``audio``
-    already stringified.
+    Returns ``{"train": [...], "dev": [...], "test": [...], "meta": {...}}``
+    with ``audio`` already stringified.
 
     ``stratify="topic"`` takes ``train_ratio`` of the folders in each topic
     group instead of the first ``train_folders`` overall, and ignores
     ``train_folders``. Balance is checked either way; the check is what tells
     you a positional split has quietly turned into a topic split.
+
+    ``dev_ratio`` carves a development split out of the *training* folders,
+    speaker-disjoint from both others. Without one there is nowhere to do error
+    analysis: mining the test set for failure patterns and feeding them back
+    into training is test-set contamination, and every number measured
+    afterwards is inflated by an amount nobody can estimate.
     """
     if stratify not in ("none", "topic"):
         raise ValueError(f"stratify must be 'none' or 'topic', got {stratify!r}")
@@ -369,9 +376,11 @@ def prepare_mce(
         train_idx = [i for i, _ in train_part]
         test_idx = [i for i, _ in test_part]
 
+    train_idx, dev_idx = _carve_dev(per_folder, train_idx, dev_ratio, stratify, say)
+
     by_idx = dict(per_folder)
     splits: Dict[str, List[dict]] = {}
-    for name, chosen in (("train", train_idx), ("test", test_idx)):
+    for name, chosen in (("train", train_idx), ("dev", dev_idx), ("test", test_idx)):
         records: List[dict] = []
         for idx in chosen:
             for r in by_idx[idx]:
@@ -381,20 +390,56 @@ def prepare_mce(
     # Returned rather than warned: callers show it after the split summaries,
     # where the reader has the numbers in front of them.
     balance = check_split_balance(splits["train"], splits["test"])
+    balance += [
+        f"train/dev: {w}" for w in check_split_balance(splits["train"], splits["dev"])
+    ]
 
     splits["meta"] = {
         "root": str(root),
         "n_folders": len(folders),
         "stratify": stratify,
+        "dev_ratio": dev_ratio,
         "train_folders": train_idx,
+        "dev_folders": dev_idx,
         "test_folders": test_idx,
         "n_train_utts": len(splits["train"]),
+        "n_dev_utts": len(splits["dev"]),
         "n_test_utts": len(splits["test"]),
         "path_prefix": path_prefix,
         "problems": problems,
         "balance_warnings": balance,
     }
     return splits
+
+
+def _carve_dev(
+    per_folder: Sequence[Tuple[int, List[dict]]],
+    train_idx: Sequence[int],
+    dev_ratio: float,
+    stratify: str,
+    say: Callable[[str], None],
+) -> Tuple[List[int], List[int]]:
+    """Split a dev set off the training folders, keeping speakers disjoint."""
+    if dev_ratio <= 0:
+        return list(train_idx), []
+    if not 0 < dev_ratio < 1:
+        raise ValueError(f"dev_ratio must be in (0, 1), got {dev_ratio}")
+
+    chosen = set(train_idx)
+    train_only = [(i, recs) for i, recs in per_folder if i in chosen]
+    keep = 1.0 - dev_ratio
+
+    if stratify == "topic":
+        train, dev = stratified_split(train_only, keep, warn=None)
+    else:
+        n_keep = max(1, round(len(train_only) * keep))
+        train = [i for i, _ in train_only[:n_keep]]
+        dev = [i for i, _ in train_only[n_keep:]]
+    say(
+        f"carved {len(dev)} dev folder(s) out of {len(train_only)} training folders "
+        f"({dev_ratio:.0%}); use dev for error analysis so the test set stays unread."
+    )
+    return sorted(train), sorted(dev)
 
 
 def load_mce(root, split: str = "test", **kwargs) -> List[dict]:
@@ -414,7 +459,7 @@ def load_mce(root, split: str = "test", **kwargs) -> List[dict]:
         for message in prepared["meta"]["balance_warnings"]:
             warn(f"BALANCE: {message}")
     if split == "all":
-        return prepared["train"] + prepared["test"]
+        return prepared["train"] + prepared["dev"] + prepared["test"]
     return prepared[split]
 
 

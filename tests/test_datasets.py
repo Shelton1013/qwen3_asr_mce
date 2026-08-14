@@ -52,7 +52,7 @@ class TestRegistry:
     def test_invalid_split_is_rejected(self, tmp_path):
         root = make_dataset(tmp_path, 2)
         with pytest.raises(ValueError, match="split must be"):
-            load_mce(root, split="dev")
+            load_mce(root, split="validation")
 
 
 class TestSplitSelection:

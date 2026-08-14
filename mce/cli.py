@@ -53,6 +53,12 @@ def _add_manifest_args(p: argparse.ArgumentParser) -> None:
     )
     src.add_argument("--train-ratio", type=float, default=0.7)
     src.add_argument(
+        "--dev-ratio",
+        type=float,
+        default=0.0,
+        help="share of training folders held out as dev; must match prepare_mce.py",
+    )
+    src.add_argument(
         "--dataset-stratify",
         default="none",
         choices=["none", "topic"],
@@ -171,6 +177,7 @@ def load_records(args) -> List[dict]:
             train_ratio=args.train_ratio,
             encoding=args.dataset_encoding,
             stratify=args.dataset_stratify,
+            dev_ratio=args.dev_ratio,
             warn=lambda m: print(f"[warn] {m}"),
         )
         boundary = (

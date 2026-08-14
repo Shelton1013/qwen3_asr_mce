@@ -122,6 +122,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         "of the first --train-folders overall. Use this when the corpus is ordered "
         "by collection batch, or a positional split silently becomes a topic split.",
     )
+    ap.add_argument(
+        "--dev-ratio",
+        type=float,
+        default=0.0,
+        help="carve this share of the TRAINING folders into a dev split. Do error "
+        "analysis and DPO negative mining on dev, never on test -- feeding test-set "
+        "failure patterns back into training inflates every number that follows.",
+    )
     ap.add_argument("--encoding", default="auto", help=f"csv encoding; auto tries {ENCODINGS}")
     ap.add_argument(
         "--path-prefix",
@@ -140,6 +148,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             encoding=args.encoding,
             path_prefix=args.path_prefix,
             stratify=args.stratify,
+            dev_ratio=args.dev_ratio,
             warn=lambda m: print(f"[warn] {m}"),
         )
     except FileNotFoundError as exc:
@@ -150,8 +159,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"[info] found {meta['n_folders']} folder(s): {shown}"
           f"{' ...' if meta['n_folders'] > 10 else ''}")
 
+    # Skip dev entirely when none was requested, rather than leaving an empty
+    # dev.jsonl around for someone to mistake for a real split.
+    names = [n for n in ("train", "dev", "test") if n != "dev" or args.dev_ratio > 0]
+
     args.out.mkdir(parents=True, exist_ok=True)
-    for name in ("train", "test"):
+    for name in names:
         path = args.out / f"{name}.jsonl"
         with open(path, "w", encoding="utf-8") as fh:
             for r in prepared[name]:
@@ -162,8 +175,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         json.dump(meta, fh, ensure_ascii=False, indent=2)
 
     print()
-    for name in ("train", "test"):
+    for name in names:
         print(summarise(prepared[name], name) if prepared[name] else f"  {name}: EMPTY")
+    if args.dev_ratio <= 0:
+        print("\n  NOTE: no dev split. Error analysis and DPO negative mining must "
+              "not run on test.jsonl -- pass --dev-ratio 0.1 to carve one from train.")
 
     balance = meta.get("balance_warnings") or []
     if balance:
