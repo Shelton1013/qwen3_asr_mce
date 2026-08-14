@@ -22,7 +22,15 @@ from .base import ASRModel, load_audio_16k
 @dataclass
 class WhisperModel(ASRModel):
     model_id: str = "openai/whisper-large-v3"
-    #: 'zh' is the sane default for Cantonese audio; 'yue' is the ablation.
+    #: ``'zh'`` is the pragmatic default for Cantonese audio and ``'yue'`` the
+    #: ablation -- large-v3 does carry a ``yue`` token, but community reports
+    #: have it collapsing into repetition loops, since Whisper saw far more
+    #: ``zh`` text than ``yue``. Run both; the gap is a property of Whisper.
+    #:
+    #: ``None`` leaves language detection to the model. That is the only setting
+    #: comparable to a model that picks its own language, and the only one under
+    #: which language-identification collapse can occur at all: forcing a token
+    #: hands the model the answer and suppresses the very failure being studied.
     language: Optional[str] = "zh"
     #: Seconds above which an utterance is chunked. ``None`` disables chunking.
     #:

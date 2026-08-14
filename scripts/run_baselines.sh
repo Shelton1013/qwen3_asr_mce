@@ -79,14 +79,24 @@ run () {
 run qwen3-asr-1.7b --model qwen3-asr --model-id "$QWEN17B"
 run qwen3-asr-0.6b --model qwen3-asr --model-id "$QWEN06B"
 
-# --- Whisper: the zh/yue ablation.
+# --- Whisper: the language-token ablation. large-v3 does carry a 'yue' token;
+# whether it helps is the question, not an assumption.
+#
+# The 'auto' arm is not optional if you care about language-identification
+# behaviour. Pinning a language hands the model the answer, so a pinned run
+# cannot collapse into a third language and cannot be compared against a model
+# that chooses its own -- which is what Qwen3-ASR does.
+run whisper-large-v3-auto      --model whisper --model-id "$WHISPER_V3"    --language auto
 run whisper-large-v3-zh        --model whisper --model-id "$WHISPER_V3"    --language zh
 run whisper-large-v3-yue       --model whisper --model-id "$WHISPER_V3"    --language yue
 run whisper-large-v3-turbo-zh  --model whisper --model-id "$WHISPER_TURBO" --language zh
 
 # --- SenseVoice: a Cantonese-adapted baseline is fairer than stock Whisper.
 # Point SENSEVOICE at SenseVoice-Small-Yue (WenetSpeech-Yue) if you have it.
-run sensevoice --model sensevoice --model-id "$SENSEVOICE" --language yue
+# 'auto' for the same reason as above; the pinned run is the recognition-only
+# measurement with LID taken out of the loop.
+run sensevoice-auto --model sensevoice --model-id "$SENSEVOICE" --language auto
+run sensevoice-yue  --model sensevoice --model-id "$SENSEVOICE" --language yue
 
 echo
 echo "################ comparison ################"

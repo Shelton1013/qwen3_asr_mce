@@ -129,8 +129,10 @@ def _add_model_args(p: argparse.ArgumentParser) -> None:
     m.add_argument(
         "--language",
         default=None,
-        help="language hint. Whisper: 'zh' (default) or 'yue' (known to collapse). "
-             "Qwen3-ASR: leave unset so it can switch freely.",
+        help="language hint. Whisper: 'zh' (default) or 'yue' (reportedly "
+        "collapses). Use 'auto' to force the model's own detection on -- required "
+        "when comparing language-identification behaviour, since pinning a "
+        "language suppresses the failure being measured. Qwen3-ASR: leave unset.",
     )
     m.add_argument(
         "--device",
@@ -244,6 +246,13 @@ def cmd_transcribe(args) -> int:
         prompt = CANTONESE_ANCHOR
         print(f"[info] anchoring with matrix-language context: {prompt}")
 
+    language = args.language
+    if language == "auto":
+        # Distinct from "unset": unset falls through to each runner's default,
+        # which for Whisper is a pinned 'zh'. This asks for detection explicitly.
+        language = ""
+        print("[info] language detection left to the model (no forced token)")
+
     extra = {}
     if prompt:
         extra["prompt"] = prompt
@@ -255,7 +264,7 @@ def cmd_transcribe(args) -> int:
     model = build_model(
         args.model,
         model_id=args.model_id,
-        language=args.language,
+        language=language,
         device=args.device,
         dtype=args.dtype,
         batch_size=args.batch_size,
