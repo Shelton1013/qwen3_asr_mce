@@ -435,6 +435,24 @@ def aggregate(
     return m
 
 
+def aggregate_clean(
+    results: Sequence[UtteranceResult], runaway_ratio: float = 2.0
+) -> CorpusMetrics:
+    """Aggregate over utterances that did not degenerate.
+
+    A dozen repetition loops can dominate a corpus figure: on one Whisper run,
+    13 utterances out of 4164 contributed roughly a third of all insertions. The
+    resulting MER describes those thirteen failures, not the model's behaviour on
+    the other 4151.
+
+    This is a companion figure, never a replacement. Reporting only the trimmed
+    number would hide a real and serious failure mode; reporting only the raw one
+    lets it stand in for everything else.
+    """
+    kept = [r for r in results if not r.foreign_script and r.length_ratio <= runaway_ratio]
+    return aggregate(kept, runaway_ratio=runaway_ratio)
+
+
 def score_corpus(
     pairs: Sequence,
     poi_window: int = 1,

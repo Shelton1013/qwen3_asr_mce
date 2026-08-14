@@ -159,6 +159,14 @@ def _add_model_args(p: argparse.ArgumentParser) -> None:
         "excludes any third one.",
     )
     m.add_argument(
+        "--no-repeat-ngram-size",
+        type=int,
+        default=None,
+        help="Whisper only: forbid repeating an n-gram. 0/unset keeps the model's "
+        "true behaviour; 5-8 suppresses the repetition loops that otherwise let a "
+        "dozen utterances dominate the corpus figure. Report both runs.",
+    )
+    m.add_argument(
         "--chunk-length-s",
         type=float,
         default=None,
@@ -260,6 +268,8 @@ def cmd_transcribe(args) -> int:
         extra["script_constraint"] = args.script_constraint
     if args.chunk_length_s:
         extra["chunk_length_s"] = args.chunk_length_s
+    if args.no_repeat_ngram_size:
+        extra["no_repeat_ngram_size"] = args.no_repeat_ngram_size
 
     model = build_model(
         args.model,
@@ -325,6 +335,31 @@ def cmd_score(args) -> int:
 
     title = args.name or Path(args.hyp).stem
     print(format_metrics(metrics, title=title))
+
+    # A handful of degenerate outputs can carry a third of the errors. Show what
+    # the corpus looks like without them, so the reader can see how much of the
+    # headline is a dozen utterances rather than the model.
+    from .metrics import aggregate_clean
+
+    clean = aggregate_clean(results, runaway_ratio=args.runaway_ratio)
+    dropped = metrics.n_utts - clean.n_utts
+    if dropped:
+        print(f"\n-- excluding {dropped} degenerate utterances "
+              f"({dropped / metrics.n_utts * 100:.2f}%: runaway or foreign-script) --")
+        for label, full, trimmed in (
+            ("MER", metrics.mer, clean.mer),
+            ("CER_zh", metrics.cer_zh, clean.cer_zh),
+            ("WER_en", metrics.wer_en, clean.wer_en),
+            ("PIER", metrics.pier, clean.pier),
+            ("insertions", metrics.ins_rate, clean.ins_rate),
+        ):
+            if full is None or trimmed is None:
+                continue
+            print(f"  {label:<12} {full * 100:7.2f} %  ->  {trimmed * 100:7.2f} %  "
+                  f"({(trimmed - full) * 100:+.2f})")
+        print("  Report both. The trimmed figure is not the model's score -- the "
+              "dropped\n  utterances are real failures -- but it separates 'bad at "
+              "this task' from\n  'catastrophic on a dozen inputs'.")
     if args.worst:
         print()
         print(format_worst(results, k=args.worst))
