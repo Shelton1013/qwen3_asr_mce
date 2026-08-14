@@ -106,6 +106,33 @@ def infer_family(checkpoint: str) -> Tuple[Optional[str], str]:
 FAMILIES = ("qwen3-asr", "whisper", "sensevoice")
 
 
+def _supported(factory: Callable[..., ASRModel], kwargs: Dict) -> Dict:
+    """Drop options the target runner has no field for, and say which.
+
+    Runners differ in what they can do: a script constraint needs an
+    autoregressive decoder, so it means nothing to SenseVoice, and chunking is
+    Whisper-specific. Passing a shared CLI flag to all of them would otherwise
+    be a TypeError instead of a no-op.
+    """
+    import dataclasses
+
+    probe = factory()
+    fields = {f.name for f in dataclasses.fields(probe)}
+    kept: Dict = {}
+    dropped: list = []
+    for key, value in kwargs.items():
+        if key in fields:
+            kept[key] = value
+        else:
+            dropped.append(key)
+    if dropped:
+        print(
+            f"[warn] {type(probe).__name__} does not support "
+            f"{', '.join(sorted(dropped))}; ignored."
+        )
+    return kept
+
+
 def build_model(name: str, **kwargs) -> ASRModel:
     """Instantiate a runner by alias, or straight from a checkpoint path.
 
@@ -122,14 +149,14 @@ def build_model(name: str, **kwargs) -> ASRModel:
     clean = {k: v for k, v in kwargs.items() if v is not None}
 
     if name in REGISTRY:
-        return REGISTRY[name](**clean)
+        return REGISTRY[name](**_supported(REGISTRY[name], clean))
 
     if looks_like_checkpoint(name):
         family, evidence = infer_family(name)
         if family:
             print(f"[info] resolved {name} -> {family} runner, via {evidence}")
             clean.setdefault("model_id", name)
-            return REGISTRY[family](**clean)
+            return REGISTRY[family](**_supported(REGISTRY[family], clean))
         raise UnknownModelError(
             f"{name!r} looks like a checkpoint but its family could not be "
             f"determined from its config.json or its name. Name it explicitly:\n"

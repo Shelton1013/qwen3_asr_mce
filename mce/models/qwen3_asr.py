@@ -40,7 +40,11 @@ NON_HF_CHECKPOINT_HINT = (
 @dataclass
 class Qwen3ASRModel(ASRModel):
     model_id: str = "Qwen/Qwen3-ASR-1.7B-hf"
+    #: Context biasing. Also the channel for the anchoring intervention -- see
+    #: mce.mitigation.CANTONESE_ANCHOR.
     prompt: Optional[str] = None
+    #: Restrict decoding to the scripts that may legitimately appear.
+    script_constraint: Optional[str] = None
 
     def _load(self) -> None:
         import transformers
@@ -57,6 +61,15 @@ class Qwen3ASRModel(ASRModel):
             dtype=self.resolve_torch_dtype(),
         )
         self.model.eval()
+
+        self._logits_processor = None
+        if self.script_constraint:
+            from ..mitigation import build_script_logits_processor
+
+            tokenizer = getattr(self.processor, "tokenizer", self.processor)
+            self._logits_processor = build_script_logits_processor(
+                tokenizer, self.script_constraint
+            )
 
     @staticmethod
     def _resolve_model_class(transformers):
@@ -112,12 +125,13 @@ class Qwen3ASRModel(ASRModel):
         self.ensure_loaded()
         inputs = self._build_request(audio_paths)
         inputs = inputs.to(self.model.device, self.model.dtype)
+        gen_kwargs = {"max_new_tokens": self.max_new_tokens, "do_sample": False}
+        if self._logits_processor is not None:
+            from transformers import LogitsProcessorList
+
+            gen_kwargs["logits_processor"] = LogitsProcessorList([self._logits_processor])
         with torch.no_grad():
-            output_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=self.max_new_tokens,
-                do_sample=False,
-            )
+            output_ids = self.model.generate(**inputs, **gen_kwargs)
         generated = output_ids[:, inputs["input_ids"].shape[1] :]
         texts = self.processor.decode(generated, return_format="transcription_only")
         if isinstance(texts, str):

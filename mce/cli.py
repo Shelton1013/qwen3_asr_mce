@@ -142,7 +142,28 @@ def _add_model_args(p: argparse.ArgumentParser) -> None:
     m.add_argument("--dtype", default="auto")
     m.add_argument("--batch-size", type=int, default=1)
     m.add_argument("--max-new-tokens", type=int, default=256)
-    m.add_argument("--prompt", default=None, help="Qwen3-ASR context biasing text")
+    m.add_argument(
+        "--prompt",
+        default=None,
+        help="Qwen3-ASR context text. Pass 'anchor' for the built-in "
+        "matrix-language anchor (mce.mitigation.CANTONESE_ANCHOR).",
+    )
+    m.add_argument(
+        "--script-constraint",
+        default=None,
+        choices=["zh+en", "zh", "en"],
+        help="forbid decoding tokens outside these scripts (collapse mitigation "
+        "baseline). 'zh+en' admits both legitimate Cantonese-English scripts and "
+        "excludes any third one.",
+    )
+    m.add_argument(
+        "--chunk-length-s",
+        type=float,
+        default=None,
+        help="Whisper only: chunk audio longer than this. Off by default -- the "
+        "long-form path is experimental for seq2seq and these utterances fit in "
+        "Whisper's native 30s window.",
+    )
 
 
 def build_normalizer(args) -> Normalizer:
@@ -214,9 +235,23 @@ def load_records(args) -> List[dict]:
 
 
 def cmd_transcribe(args) -> int:
+    from .mitigation import CANTONESE_ANCHOR
     from .models import build_model
 
     records = load_records(args)
+    prompt = args.prompt
+    if prompt == "anchor":
+        prompt = CANTONESE_ANCHOR
+        print(f"[info] anchoring with matrix-language context: {prompt}")
+
+    extra = {}
+    if prompt:
+        extra["prompt"] = prompt
+    if args.script_constraint:
+        extra["script_constraint"] = args.script_constraint
+    if args.chunk_length_s:
+        extra["chunk_length_s"] = args.chunk_length_s
+
     model = build_model(
         args.model,
         model_id=args.model_id,
@@ -225,7 +260,7 @@ def cmd_transcribe(args) -> int:
         dtype=args.dtype,
         batch_size=args.batch_size,
         max_new_tokens=args.max_new_tokens,
-        **({"prompt": args.prompt} if args.prompt else {}),
+        **extra,
     )
     print(f"[info] {args.model} -> {getattr(model, 'model_id', '?')} "
           f"on {len(records)} utterances")
