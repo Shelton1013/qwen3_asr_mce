@@ -349,6 +349,51 @@ def cmd_analyze(args) -> int:
     return 0
 
 
+def cmd_check_alignment(args) -> int:
+    """Find utterances paired with the wrong reference."""
+    from .alignment_check import (
+        find_misalignments,
+        find_swapped_pairs,
+        format_report,
+    )
+
+    rows = read_jsonl(args.utts)
+    if any("ref" not in r or "hyp" not in r for r in rows):
+        raise SystemExit(
+            f"{args.utts}: rows must contain 'ref' and 'hyp' -- pass the dump from "
+            f"`score --out-utts`."
+        )
+    found = find_misalignments(
+        rows,
+        window=args.window,
+        max_own_mer=args.min_own_mer,
+        ratio=args.ratio,
+        max_best_mer=args.max_match_mer,
+    )
+    report = format_report(rows, found, top=args.top)
+    print(report)
+
+    if args.out_json:
+        Path(args.out_json).parent.mkdir(parents=True, exist_ok=True)
+        pairs = {(a.index, b.index) for a, b in find_swapped_pairs(found)}
+        payload = [
+            {
+                "id": m.utt_id,
+                "matches": m.best_id,
+                "own_mer": m.own_mer,
+                "match_mer": m.best_mer,
+                "mutual": any(m.index in p for p in pairs),
+                "ref": m.ref,
+                "hyp": m.hyp,
+            }
+            for m in found
+        ]
+        with open(args.out_json, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+        print(f"\n[info] {len(payload)} suspect rows -> {args.out_json}")
+    return 0
+
+
 def cmd_compare(args) -> int:
     """Render a markdown comparison table from several score --out-json files."""
     rows = []
@@ -426,6 +471,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="permit analysing a dump whose filename says 'test'",
     )
     a.set_defaults(func=cmd_analyze)
+
+    k = sub.add_parser(
+        "check-alignment",
+        help="find utterances whose audio is paired with the wrong reference",
+    )
+    k.add_argument("--utts", required=True, help="per-utterance JSONL from score --out-utts")
+    k.add_argument("--window", type=int, default=5, help="rows either side to compare")
+    k.add_argument("--min-own-mer", type=float, default=0.5,
+                   help="only inspect rows scoring at least this badly")
+    k.add_argument("--ratio", type=float, default=0.5,
+                   help="a neighbour must fit at least this much better, proportionally")
+    k.add_argument("--max-match-mer", type=float, default=0.5,
+                   help="and this well in absolute terms")
+    k.add_argument("--top", type=int, default=20)
+    k.add_argument("--out-json", default=None, help="write the suspect rows")
+    k.set_defaults(func=cmd_check_alignment)
 
     c = sub.add_parser("compare", help="markdown table from several --out-json files")
     c.add_argument("results", nargs="+")
