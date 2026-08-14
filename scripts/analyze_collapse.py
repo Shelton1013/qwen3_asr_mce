@@ -93,6 +93,45 @@ def print_dose_response(rows: Sequence[dict], key: str, label: str, bins: int) -
               f"{collapsed / n * 100:6.2f}%  {bar}")
 
 
+def stratified_grid(rows: Sequence[dict], strata: int = 3, cells: int = 3) -> None:
+    """Collapse rate in a length x CMI grid.
+
+    CMI is ``(N - max(zh, en)) / N``, so it is bounded by the minority side: the
+    same amount of English yields a higher CMI in a shorter utterance. Collapsed
+    utterances are also shorter. That entanglement means a marginal CMI effect
+    could be a length effect in disguise.
+
+    Holding length roughly constant within a stratum breaks the tie. If the
+    collapse rate still climbs across CMI cells *inside* each length band, the
+    mixing proportion is doing the work; if it flattens, length was.
+    """
+    usable = [r for r in rows if r.get("cmi_ref") is not None and r.get("n_ref_tokens")]
+    if not usable:
+        return
+    by_len = sorted(usable, key=lambda r: r["n_ref_tokens"])
+    step = len(by_len) / strata
+
+    print(f"\n-- collapse rate by CMI, within length strata --")
+    print(f"  {'length band':>16}  " + "".join(f"{'CMI cell ' + str(c + 1):>16}" for c in range(cells)))
+    for s in range(strata):
+        band = by_len[int(s * step) : int((s + 1) * step)]
+        if not band:
+            continue
+        band = sorted(band, key=lambda r: r["cmi_ref"])
+        cell_step = len(band) / cells
+        lo, hi = band[0]["n_ref_tokens"], band[-1]["n_ref_tokens"]
+        row = f"  {lo:6d} - {hi:5d}  "
+        for c in range(cells):
+            cell = band[int(c * cell_step) : int((c + 1) * cell_step)]
+            if not cell:
+                row += f"{'-':>16}"
+                continue
+            hits = sum(1 for r in cell if r.get("foreign_script"))
+            row += f"{hits:>5d}/{len(cell):<4d}{hits / len(cell) * 100:5.1f}%"
+        print(row)
+    print("  (each row holds length roughly constant; read left to right)")
+
+
 def concentration(rows: Sequence[dict], key: str, label: str, top: int = 8) -> None:
     """Are the collapses spread across the corpus or piled into a few groups?"""
     totals: Dict[str, int] = {}
@@ -125,6 +164,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--manifest", type=Path, default=None,
                     help="manifest with topic/speaker, joined on id")
     ap.add_argument("--bins", type=int, default=10)
+    ap.add_argument("--strata", type=int, default=3, help="length strata for the grid")
+    ap.add_argument("--cells", type=int, default=3, help="CMI cells within each stratum")
     ap.add_argument("--permutations", type=int, default=10000)
     args = ap.parse_args(argv)
 
@@ -179,6 +220,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     print_dose_response(rows, "cmi_ref", "code-mixing index", args.bins)
     print_dose_response(rows, "en_tokens", "absolute English token count", args.bins)
     print_dose_response(rows, "n_ref_tokens", "utterance length", args.bins)
+
+    stratified_grid(rows, strata=args.strata, cells=args.cells)
 
     concentration(rows, "speaker", "speaker")
     if any(r.get("topic") for r in rows):
