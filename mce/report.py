@@ -62,6 +62,8 @@ def format_metrics(metrics: CorpusMetrics, title: str = "") -> str:
     lines.append(f"  length ratio         {_num(m.length_ratio)}   (hyp tokens / ref tokens)")
     lines.append(f"  runaway rate         {_pct(m.runaway_rate)} %   "
                  f"({m.utts_runaway} utts far longer than reference)")
+    lines.append(f"  foreign script rate  {_pct(m.foreign_script_rate)} %   "
+                 f"({m.utts_foreign_script} utts answered in a third language)")
     lines.append(f"  mean CMI (reference) {_num(m.mean_cmi_ref)}   "
                  f"(0 = monolingual, 0.5 = balanced mix)")
     lines.append("")
@@ -95,7 +97,20 @@ def diagnose(m: CorpusMetrics) -> str:
             f"empty from a failed decode."
         )
 
-    if m.runaway_rate is not None and m.runaway_rate > 0.05:
+    # Once the cause is identified, the generic "something is off" notes below
+    # stop being help and start being noise -- or worse, point somewhere wrong.
+    cause_identified = bool(m.foreign_script_rate)
+
+    if m.foreign_script_rate:
+        notes.append(
+            f"- {_pct(m.foreign_script_rate)}% of utterances came back mostly in a "
+            f"script that is neither Chinese nor Latin (Thai, Cyrillic, ...). That is "
+            f"language identification failing outright, not recognition. CER_zh and "
+            f"WER_en cannot see it -- both are keyed off the reference, which contains "
+            f"no such text to be wrong about. The inflated MER, PIER and insertion "
+            f"figures below are downstream of this."
+        )
+    if m.runaway_rate is not None and m.runaway_rate > 0.05 and not cause_identified:
         notes.append(
             f"- {_pct(m.runaway_rate)}% of utterances are >2x the reference length, and "
             f"insertions are {_pct(m.ins_rate)}% of reference tokens. That is decoder "
@@ -136,7 +151,7 @@ def diagnose(m: CorpusMetrics) -> str:
             f"errors are concentrated at switch points, which is the expected shape for "
             f"a model that is good at both languages but bad at switching between them."
         )
-    if m.mer is not None and m.mer > 1.0:
+    if m.mer is not None and m.mer > 1.0 and not cause_identified:
         notes.append(
             "- MER above 1.0 means errors outnumber reference tokens. On clean read "
             "speech that is almost always a scoring bug, not a model result. Read the "
@@ -155,14 +170,14 @@ def markdown_table(rows: Sequence[tuple]) -> str:
     """
     header = (
         "| Model | MER % | CER_zh % | WER_en % | PIER % | EN omit % | EN->ZH % | "
-        "Ins % | Del % | Sub % | Runaway % | Len ratio |"
+        "Ins % | Del % | Sub % | Runaway % | Foreign % | Len ratio |"
     )
-    sep = "|" + "---|" * 12
+    sep = "|" + "---|" * 13
     lines = [header, sep]
     for name, m in rows:
         lines.append(
             "| {name} | {mer} | {cer} | {wer} | {pier} | {omit} | {tr} | {ins} | "
-            "{dele} | {sub} | {run} | {lr} |".format(
+            "{dele} | {sub} | {run} | {foreign} | {lr} |".format(
                 name=name,
                 mer=_pct(m.mer),
                 cer=_pct(m.cer_zh),
@@ -174,6 +189,7 @@ def markdown_table(rows: Sequence[tuple]) -> str:
                 dele=_pct(m.del_rate),
                 sub=_pct(m.sub_rate),
                 run=_pct(m.runaway_rate),
+                foreign=_pct(m.foreign_script_rate),
                 lr=_num(m.length_ratio),
             )
         )

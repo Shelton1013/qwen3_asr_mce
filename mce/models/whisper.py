@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Sequence
 
-from .base import ASRModel
+from .base import ASRModel, load_audio_16k
 
 
 @dataclass
@@ -70,9 +70,20 @@ class WhisperModel(ASRModel):
         return kwargs
 
     def transcribe_batch(self, audio_paths: Sequence[str]) -> List[str]:
+        """Decode a batch, feeding the pipeline arrays rather than paths.
+
+        Handed a filename, the transformers ASR pipeline shells out to ffmpeg --
+        a hard system dependency, and one subprocess per utterance. soundfile is
+        already required for everything else here, so reading the audio
+        ourselves removes the dependency and the fork.
+        """
         self.ensure_loaded()
+        inputs = [
+            {"raw": load_audio_16k(path), "sampling_rate": 16000}
+            for path in audio_paths
+        ]
         outputs = self.pipe(
-            list(audio_paths),
+            inputs,
             batch_size=max(1, self.batch_size),
             generate_kwargs=self._generate_kwargs(),
             return_timestamps=False,

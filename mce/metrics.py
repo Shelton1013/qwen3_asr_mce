@@ -73,6 +73,10 @@ class UtteranceResult:
     dels: int
     ins: int
     lang_ref: Dict[str, int]
+    #: Token counts of the *hypothesis*. Needed because every other per-language
+    #: figure keys off the reference, which cannot see a model that answered in
+    #: a language the reference never contained.
+    lang_hyp: Dict[str, int]
     lang_err: Dict[str, int]
     lang_sub: Dict[str, int]
     lang_del: Dict[str, int]
@@ -87,6 +91,10 @@ class UtteranceResult:
     en_lost: int
     cmi_ref: float
     length_ratio: float
+    #: True when the hypothesis is mostly characters from neither language --
+    #: Thai, Cyrillic, Devanagari. The model identified the wrong language
+    #: outright rather than mis-recognising words in the right one.
+    foreign_script: bool = False
 
     @property
     def errors(self) -> int:
@@ -120,6 +128,7 @@ class CorpusMetrics:
     dels: int = 0
     ins: int = 0
     lang_ref: Counter = field(default_factory=Counter)
+    lang_hyp: Counter = field(default_factory=Counter)
     lang_err: Counter = field(default_factory=Counter)
     lang_sub: Counter = field(default_factory=Counter)
     lang_del: Counter = field(default_factory=Counter)
@@ -135,6 +144,7 @@ class CorpusMetrics:
     en_sub_by_zh: int = 0
     en_lost: int = 0
     utts_runaway: int = 0
+    utts_foreign_script: int = 0
     sum_cmi_ref: float = 0.0
 
     # -- derived ----------------------------------------------------------
@@ -192,6 +202,20 @@ class CorpusMetrics:
         return _safe_div(self.utts_runaway, self.n_utts)
 
     @property
+    def foreign_script_rate(self) -> Optional[float]:
+        """Share of utterances answered in a third language entirely.
+
+        Anything above zero is a language-identification failure, not a
+        recognition one, and none of the per-language rates can see it: they are
+        all keyed off the reference, which contains no Thai to be wrong about.
+        """
+        return _safe_div(self.utts_foreign_script, self.n_utts)
+
+    @property
+    def hyp_foreign_token_rate(self) -> Optional[float]:
+        return _safe_div(self.lang_hyp[OTHER], self.n_hyp_tokens)
+
+    @property
     def switch_ratio(self) -> Optional[float]:
         """Switches produced vs switches expected. Well below 1.0 means the
         model is flattening the utterance into a single language."""
@@ -229,6 +253,8 @@ class CorpusMetrics:
             "en_sub_by_zh_rate": self.en_sub_by_zh_rate,
             "en_lost_rate": self.en_lost_rate,
             "runaway_rate": self.runaway_rate,
+            "foreign_script_rate": self.foreign_script_rate,
+            "hyp_foreign_token_rate": self.hyp_foreign_token_rate,
             "switch_ratio": self.switch_ratio,
             "length_ratio": self.length_ratio,
             "mean_cmi_ref": self.mean_cmi_ref,
@@ -249,6 +275,14 @@ def _safe_div(num: float, den: float) -> Optional[float]:
     if not den:
         return None
     return num / den
+
+
+#: Share of hypothesis tokens outside zh/en/digits above which an utterance is
+#: called a language-identification failure rather than a recognition error.
+#: Normalisation strips punctuation, so a healthy hypothesis has almost none.
+FOREIGN_SCRIPT_THRESHOLD = 0.30
+#: Below this many tokens the share is too noisy to mean anything.
+FOREIGN_SCRIPT_MIN_TOKENS = 5
 
 
 def score_utterance(
@@ -312,6 +346,10 @@ def score_utterance(
 
     n_ref = len(ref_tokens)
     n_hyp = len(hyp_tokens)
+    foreign = (
+        n_hyp >= FOREIGN_SCRIPT_MIN_TOKENS
+        and lang_hyp.get(OTHER, 0) / n_hyp > FOREIGN_SCRIPT_THRESHOLD
+    )
     return UtteranceResult(
         id=utt_id,
         ref=ref_text,
@@ -323,6 +361,7 @@ def score_utterance(
         dels=dels,
         ins=ins,
         lang_ref={l: lang_ref.get(l, 0) for l in _LANGS},
+        lang_hyp={l: lang_hyp.get(l, 0) for l in _LANGS},
         lang_err={l: lang_err[l] for l in _LANGS},
         lang_sub={l: lang_sub[l] for l in _LANGS},
         lang_del={l: lang_del[l] for l in _LANGS},
@@ -337,6 +376,7 @@ def score_utterance(
         en_lost=en_lost,
         cmi_ref=code_mixing_index(ref_tokens),
         length_ratio=(n_hyp / n_ref) if n_ref else float("inf") if n_hyp else 1.0,
+        foreign_script=foreign,
     )
 
 
@@ -368,6 +408,7 @@ def aggregate(
         m.ins += r.ins
         for lang in _LANGS:
             m.lang_ref[lang] += r.lang_ref.get(lang, 0)
+            m.lang_hyp[lang] += r.lang_hyp.get(lang, 0)
             m.lang_err[lang] += r.lang_err.get(lang, 0)
             m.lang_sub[lang] += r.lang_sub.get(lang, 0)
             m.lang_del[lang] += r.lang_del.get(lang, 0)
@@ -388,6 +429,8 @@ def aggregate(
         m.en_lost += r.en_lost
         if r.n_ref and r.length_ratio > runaway_ratio:
             m.utts_runaway += 1
+        if r.foreign_script:
+            m.utts_foreign_script += 1
         m.sum_cmi_ref += r.cmi_ref
     return m
 
